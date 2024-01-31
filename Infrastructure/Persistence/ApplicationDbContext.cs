@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Weather.Models;
 
 namespace Weather.Infrastructure.Persistence
 {
@@ -9,13 +10,16 @@ namespace Weather.Infrastructure.Persistence
         }
 
         public DbSet<City> Cities { get; set; }
-      
+        public DbSet<WeatherTable> Weather { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<City>().HasKey(c => c.Id);
-            base.OnModelCreating(modelBuilder);
+            modelBuilder.Entity<WeatherTable>().HasKey(c => c.Id);
 
+       
+        
+            base.OnModelCreating(modelBuilder);
         }
     }
 }

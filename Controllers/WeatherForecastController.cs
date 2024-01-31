@@ -5,11 +5,13 @@ using System;
 using Weather.Infrastructure.Persistence;
 using Weather.Models.Helpers;
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http;
+using Weather.Models;
 
 namespace Weather.Controllers
 {
     [ApiController]
-    [Route("api")]
+    [Route("weather")]
     public class WeatherForecastController : ControllerBase
     {
         
@@ -46,7 +48,7 @@ namespace Weather.Controllers
                 return StatusCode(500, $"An error occurred: {ex.Message}");
             }
         }
-      
+
 
 
         [HttpGet]
@@ -55,6 +57,13 @@ namespace Weather.Controllers
         {
             try
             {
+                // Check if the city already exists in the database
+                var existingCity = await _context.Cities.FirstOrDefaultAsync(c => c.Name == city);
+                if (existingCity != null)
+                {
+                    return Ok("City exists in the database"); 
+                }
+
                 var client = new HttpClient();
                 var request = new HttpRequestMessage
                 {
@@ -83,13 +92,13 @@ namespace Weather.Controllers
                         longitude = weatherData.Coord.lon,
                         latitude = weatherData.Coord.lat
                     };
-                    _logger.Log(LogLevel.Information, cityObj.Name.ToString());
+                    
 
                     // Insert the City object into the database
                     _context.Cities.Add(cityObj);
                     await _context.SaveChangesAsync();
 
-                    return Ok(); // Return 200 OK if insertion is successful
+                    return Ok("City Inserted"); // Return 200 OK if insertion is successful
                 }
             }
             catch (Exception ex)
@@ -98,6 +107,115 @@ namespace Weather.Controllers
                 return StatusCode(500, ex.Message);
             }
         }
+
+        [HttpGet]
+        [Route("{date}/{city}")]
+        public async Task<IActionResult> InsertInDatabasePerDateAndCity(string city, DateTime date)
+        {
+            var client = new HttpClient();
+            var coord = await _context.Cities.FirstOrDefaultAsync(m => m.Name == city);
+            if (coord == null)
+            {
+               var res = await client.GetAsync($"http://127.0.0.1:5000//weather/coordinates/{city}");
+               if(!res.IsSuccessStatusCode)
+                {
+                    throw new Exception("Something's wrong");
+                }
+               else coord = await _context.Cities.FirstOrDefaultAsync(m => m.Name == city);
+            }
+            
+            var request = new HttpRequestMessage
+            {
+                Method = HttpMethod.Get,
+                RequestUri = new Uri($"https://open-weather13.p.rapidapi.com/city/fivedaysforcast/{coord.latitude}/{coord.longitude}"),
+                Headers =
+                {
+                    { "X-RapidAPI-Key", "f95ce684c2msh5ca0330a7bc3f70p115564jsnfc599ba663d2" },
+                    { "X-RapidAPI-Host", "open-weather13.p.rapidapi.com" },
+                },
+            };
+            using (var response = await client.SendAsync(request))
+            {
+                response.EnsureSuccessStatusCode();
+                var body = await response.Content.ReadAsStringAsync();
+                var weatherData = JsonConvert.DeserializeObject<WeatherForecastResponse>(body);
+                var data = new List<WeatherTable>();
+                foreach (var weather in weatherData.List)
+                {
+                    foreach (var desc in weather.Weather)
+                    {
+                        var City = weatherData.City.Name;
+                        var Date = weather.Dt;
+                        var Temp = weather.Main.Temp;
+                        var Desc = desc.Description;
+                        var Cond = desc.Main;
+
+                        DateTimeOffset dateTimeOffset = DateTimeOffset.FromUnixTimeSeconds(Date);
+                        DateTime dateTime = dateTimeOffset.UtcDateTime;
+
+                        var existingWeather = await _context.Weather.FirstOrDefaultAsync(m => m.City == city && m.Date == date);
+                        if (existingWeather == null)
+                        {
+                            var weatr = new WeatherTable
+                            {
+                                Id = new Guid(),
+                                City = City,
+                                Date = dateTime,
+                                Temperature = Temp,
+                                Description = Desc,
+                                Condition = Cond
+                            };
+                            _context.Weather.Add(weatr);
+
+                        }
+
+                        await _context.SaveChangesAsync();
+
+                    }
+
+
+                }
+                return Ok(body);
+            }
+        }
+
+        [HttpGet]
+        [Route("choose/{city}/{date}")]
+        public async Task<IActionResult> GetFittingWeatherConditions(string city, DateTime date)
+        {
+            var inputDate = date.Date;
+
+            // Query the database to find matching records
+            WeatherTable coord = await _context.Weather.FirstOrDefaultAsync(m =>
+                    m.City == city &&
+                    m.Date.Date == inputDate && m.Date.TimeOfDay == TimeSpan.FromHours(15)
+
+                    );
+            var commentary = "";
+            string time = coord.Date.TimeOfDay.ToString();
+            if (coord != null)
+            {
+                
+                if (coord.Condition.ToLower() == "rain" || coord.Condition.ToLower() == "thunderstorm" || coord.Condition.ToLower() == "snow" || coord.Condition.ToLower() == "tornado")
+                {
+                    commentary = commentary + $"Unfitting weather for a match.The meteorolgists predict {coord.Condition}, more exactly {coord.Description}.";
+                    if (coord.Temperature < 278.15)
+                    {
+                        commentary = commentary + $" It may be too cold for this match at {coord.Temperature - 273.00} degrees Celsius. ";
+                    }
+                    commentary = commentary + " We suggest rescheduling.";
+                }
+                else commentary = $"Perfect weather for a match. Meterologists predict {coord.Condition}, more exactly {coord.Description}. The temperature will be {coord.Temperature - 273.00} degrees Celsius.";
+
+            }
+            else throw new Exception("Couldn't get details");
+            return Ok(commentary);
+
+
+
+        }
+
+
 
     }
 }
