@@ -188,11 +188,10 @@ namespace Weather.Controllers
             // Query the database to find matching records
             WeatherTable coord = await _context.Weather.FirstOrDefaultAsync(m =>
                     m.City == city &&
-                    m.Date.Date == inputDate && m.Date.TimeOfDay == TimeSpan.FromHours(15)
-
-                    );
+                    m.Date.Date == inputDate 
+           );
             var commentary = "";
-            string time = coord.Date.TimeOfDay.ToString();
+            
             if (coord != null)
             {
                 
