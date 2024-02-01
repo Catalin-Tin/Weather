@@ -182,27 +182,35 @@ namespace Weather.Controllers
         public async Task<IActionResult> GetFittingWeatherConditions(string city, DateTime date)
         {
             var inputDate = date.Date;
+            var st = inputDate.ToString();
+            var tab = st.Split();
 
             // Query the database to find matching records
             WeatherTable coord = await _context.Weather.FirstOrDefaultAsync(m =>
                     m.City == city &&
                     m.Date.Date == inputDate 
            );
-            var commentary = "";
+            var commentary = $"The match is scheduled on {tab[0]} in {city.ToUpper()}. ";
             
             if (coord != null)
             {
-                
-                if (coord.Condition.ToLower() == "rain" || coord.Condition.ToLower() == "thunderstorm" || coord.Condition.ToLower() == "snow" || coord.Condition.ToLower() == "tornado")
+
+                if ((coord.Condition.ToLower() == "rain" || coord.Condition.ToLower() == "thunderstorm" || coord.Condition.ToLower() == "snow" || coord.Condition.ToLower() == "tornado") && coord.Temperature < 278.15)
                 {
-                    commentary = commentary + $"Unfitting weather for a match.The meteorolgists predict {coord.Condition}, more exactly {coord.Description}.";
-                    if (coord.Temperature < 278.15)
-                    {
-                        commentary = commentary + $" It may be too cold for this match at {coord.Temperature - 273.00} degrees Celsius. ";
-                    }
-                    commentary = commentary + " We suggest rescheduling.";
+                    commentary = commentary + $"Unfitting weather for a match .The meteorologists predict {coord.Condition}, more exactly {coord.Description}. It may be too cold for this match at {coord.Temperature - 273.00} degrees Celsius.";
                 }
-                else commentary = $"Perfect weather for a match. Meterologists predict {coord.Condition}, more exactly {coord.Description}. The temperature will be {coord.Temperature - 273.00} degrees Celsius.";
+                else if (coord.Condition.ToLower() == "rain" || coord.Condition.ToLower() == "thunderstorm" || coord.Condition.ToLower() == "snow" || coord.Condition.ToLower() == "tornado")
+                {
+                    commentary = commentary + $"Unfitting weather for a match.The meteorologists predict {coord.Condition}, more exactly {coord.Description}.";
+                }
+                else if (coord.Temperature < 278.15)
+                {
+                    commentary = commentary + $"It may be too cold for this match at {coord.Temperature - 273.00} degrees Celsius.";
+                }
+                else
+                {
+                    commentary = commentary + $"Perfect weather for a match. Meterologists predict {coord.Condition}, more exactly {coord.Description}. The temperature will be {coord.Temperature - 273.00} degrees Celsius.";
+                }
 
             }
             else throw new Exception("Couldn't get details");
