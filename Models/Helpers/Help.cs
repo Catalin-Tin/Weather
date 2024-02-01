@@ -37,4 +37,11 @@
         public double Temperature { get; set; }
         public string Commentary { get; set; }
     }
+
+
+    public class Res
+    {
+        public DateTime Date { get; set; }
+        public string Description { get; set; }
+    }
 }
