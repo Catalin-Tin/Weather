@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Net.Http;
 using Weather.Models;
 using MySqlX.XDevAPI;
+using System.Drawing.Drawing2D;
 
 namespace Weather.Controllers
 {
@@ -29,6 +30,9 @@ namespace Weather.Controllers
         [Route("status")]
         public async Task<IActionResult> GetStatus()
         {
+            
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
             try
             {
                 // Attempt to retrieve the city from the database
@@ -43,6 +47,11 @@ namespace Weather.Controllers
                 // City found, return it with status OK
                 return Ok("Microservice is functional");
             }
+            catch (OperationCanceledException)
+            {
+                // Handle the timeout
+                return StatusCode(504, "Request timed out");
+            }
             catch (Exception ex)
             {
                 // Log any errors that occur during database access
@@ -56,6 +65,7 @@ namespace Weather.Controllers
         [Route("getCoord/{city}")]
         public async Task<IActionResult> InsertCityIntoDatabaseAsync(string city)
         {
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             try
             {
                 // Check if the city already exists in the database
@@ -69,7 +79,7 @@ namespace Weather.Controllers
                 var request = new HttpRequestMessage
                 {
                     Method = HttpMethod.Get,
-                    RequestUri = new Uri($"https://open-weather13.p.rapidapi.com/city/{Uri.EscapeUriString(city)}"),
+                    RequestUri = new Uri($"https://open-weather13.p.rapidapi.com/city/{city}"),
                     Headers =
             {
                 { "X-RapidAPI-Key", "f95ce684c2msh5ca0330a7bc3f70p115564jsnfc599ba663d2" },
@@ -89,7 +99,7 @@ namespace Weather.Controllers
                     var cityObj = new City
                     {
                         Id = Guid.NewGuid(), // Generate a new GUID for the city
-                        Name = weatherData.Name,
+                        Name = city,
                         longitude = weatherData.Coord.lon,
                         latitude = weatherData.Coord.lat
                     };
@@ -102,6 +112,11 @@ namespace Weather.Controllers
                     return Ok($"{cityObj.Name} with coordinates: latitude {cityObj.latitude} and longitude {cityObj.longitude} "); // Return 200 OK if insertion is successful
                 }
             }
+            catch (OperationCanceledException)
+            {
+                // Handle the timeout
+                return StatusCode(504, "Request timed out");
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "An error occurred while inserting city data into the database.");
@@ -113,48 +128,52 @@ namespace Weather.Controllers
         [Route("forecast/{city}")]
         public async Task<IActionResult> InsertInDatabasePerDateAndCity(string city)
         {
-            var client = new HttpClient();
-            var coord = await _context.Cities.FirstOrDefaultAsync(m => m.Name == city);
-            if (coord == null)
+
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            try
             {
-               var res = await client.GetAsync($"http://127.0.0.1:5000//weather/coordinates/{city}");
-               if(!res.IsSuccessStatusCode)
+                var client = new HttpClient();
+                var coord = await _context.Cities.FirstOrDefaultAsync(m => m.Name == city);
+                if (coord == null)
                 {
-                    throw new Exception("Something's wrong");
+                    var res = await client.GetAsync($"http://gateway:5000/weather/coordinates/{city}");
+                    if (!res.IsSuccessStatusCode)
+                    {
+                        throw new Exception("Something's wrong");
+                    }
+                    else coord = await _context.Cities.FirstOrDefaultAsync(m => m.Name == city);
                 }
-               else coord = await _context.Cities.FirstOrDefaultAsync(m => m.Name == city);
-            }
-            
-            var request = new HttpRequestMessage
-            {
-                Method = HttpMethod.Get,
-                RequestUri = new Uri($"https://open-weather13.p.rapidapi.com/city/fivedaysforcast/{coord.latitude}/{coord.longitude}"),
-                Headers =
+
+                var request = new HttpRequestMessage
+                {
+                    Method = HttpMethod.Get,
+                    RequestUri = new Uri($"https://open-weather13.p.rapidapi.com/city/fivedaysforcast/{coord.latitude}/{coord.longitude}"),
+                    Headers =
                 {
                     { "X-RapidAPI-Key", "f95ce684c2msh5ca0330a7bc3f70p115564jsnfc599ba663d2" },
                     { "X-RapidAPI-Host", "open-weather13.p.rapidapi.com" },
                 },
-            };
-            using (var response = await client.SendAsync(request))
-            {
-                response.EnsureSuccessStatusCode();
-                var body = await response.Content.ReadAsStringAsync();
-                var weatherData = JsonConvert.DeserializeObject<WeatherForecastResponse>(body);
-                var data = new List<WeatherTable>();
-                foreach (var weather in weatherData.List)
+                };
+                using (var response = await client.SendAsync(request))
                 {
-                    foreach (var desc in weather.Weather)
+                    response.EnsureSuccessStatusCode();
+                    var body = await response.Content.ReadAsStringAsync();
+                    var weatherData = JsonConvert.DeserializeObject<WeatherForecastResponse>(body);
+                    var data = new List<WeatherTable>();
+                    foreach (var weather in weatherData.List)
                     {
-                        var City = weatherData.City.Name;
-                        var Date = weather.Dt;
-                        var Temp = weather.Main.Temp;
-                        var Desc = desc.Description;
-                        var Cond = desc.Main;
+                        foreach (var desc in weather.Weather)
+                        {
+                            var City = weatherData.City.Name;
+                            var Date = weather.Dt;
+                            var Temp = weather.Main.Temp;
+                            var Desc = desc.Description;
+                            var Cond = desc.Main;
 
-                        DateTimeOffset dateTimeOffset = DateTimeOffset.FromUnixTimeSeconds(Date);
-                        DateTime dateTime = dateTimeOffset.UtcDateTime;
+                            DateTimeOffset dateTimeOffset = DateTimeOffset.FromUnixTimeSeconds(Date);
+                            DateTime dateTime = dateTimeOffset.UtcDateTime;
 
-                        
+
                             var weatr = new WeatherTable
                             {
                                 Id = new Guid(),
@@ -165,15 +184,24 @@ namespace Weather.Controllers
                                 Condition = Cond
                             };
                             _context.Weather.Add(weatr);
-                        data.Add(weatr );
+                            data.Add(weatr);
 
 
-                        await _context.SaveChangesAsync();
+                            await _context.SaveChangesAsync();
 
+                        }
                     }
+                    return Ok(data);
                 }
-                return Ok(data);
             }
+            catch (OperationCanceledException)
+            {
+                // Handle the timeout
+                return StatusCode(504, "Request timed out");
+            }
+
+
+
         }
 
       
@@ -181,76 +209,91 @@ namespace Weather.Controllers
         [Route("choose/{city}/{date}")]
         public async Task<IActionResult> GetFittingWeatherConditions(string city, DateTime date)
         {
-            var inputDate = date.Date;
-            var st = inputDate.ToString();
-            var tab = st.Split();
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
 
-            // Query the database to find matching records
-            WeatherTable coord = await _context.Weather.FirstOrDefaultAsync(m =>
-                    m.City == city &&
-                    m.Date.Date == inputDate 
-           );
-            var commentary = $"The match is scheduled on {tab[0]} in {city.ToUpper()}. ";
-            
-            if (coord != null)
+            try
             {
+                var inputDate = date.Date;
+                var st = inputDate.ToString();
+                var tab = st.Split();
 
-                if ((coord.Condition.ToLower() == "rain" || coord.Condition.ToLower() == "thunderstorm" || coord.Condition.ToLower() == "snow" || coord.Condition.ToLower() == "tornado") && coord.Temperature < 278.15)
-                {
-                    commentary = commentary + $"Unfitting weather for a match .The meteorologists predict {coord.Condition}, more exactly {coord.Description}. It may be too cold for this match at {coord.Temperature - 273.00} degrees Celsius.";
-                }
-                else if (coord.Condition.ToLower() == "rain" || coord.Condition.ToLower() == "thunderstorm" || coord.Condition.ToLower() == "snow" || coord.Condition.ToLower() == "tornado")
-                {
-                    commentary = commentary + $"Unfitting weather for a match.The meteorologists predict {coord.Condition}, more exactly {coord.Description}.";
-                }
-                else if (coord.Temperature < 278.15)
-                {
-                    commentary = commentary + $"It may be too cold for this match at {coord.Temperature - 273.00} degrees Celsius.";
-                }
-                else
-                {
-                    commentary = commentary + $"Perfect weather for a match. Meterologists predict {coord.Condition}, more exactly {coord.Description}. The temperature will be {coord.Temperature - 273.00} degrees Celsius.";
-                }
+                // Query the database to find matching records
+                WeatherTable coord = await _context.Weather.FirstOrDefaultAsync(m =>
+                        m.City == city &&
+                        m.Date.Date == inputDate
+               );
+                var commentary = $"The match is scheduled on {tab[0]} in {city.ToUpper()}. ";
 
+                if (coord != null)
+                {
+
+                    if ((coord.Condition.ToLower() == "rain" || coord.Condition.ToLower() == "thunderstorm" || coord.Condition.ToLower() == "snow" || coord.Condition.ToLower() == "tornado") && coord.Temperature < 278.15)
+                    {
+                        commentary = commentary + $"Unfitting weather for a match .The meteorologists predict {coord.Condition}, more exactly {coord.Description}. It may be too cold for this match at {coord.Temperature - 273.00} degrees Celsius.";
+                    }
+                    else if (coord.Condition.ToLower() == "rain" || coord.Condition.ToLower() == "thunderstorm" || coord.Condition.ToLower() == "snow" || coord.Condition.ToLower() == "tornado")
+                    {
+                        commentary = commentary + $"Unfitting weather for a match.The meteorologists predict {coord.Condition}, more exactly {coord.Description}.";
+                    }
+                    else if (coord.Temperature < 278.15)
+                    {
+                        commentary = commentary + $"It may be too cold for this match at {coord.Temperature - 273.00} degrees Celsius.";
+                    }
+                    else
+                    {
+                        commentary = commentary + $"Perfect weather for a match. Meterologists predict {coord.Condition}, more exactly {coord.Description}. The temperature will be {coord.Temperature - 273.00} degrees Celsius.";
+                    }
+
+                }
+                else throw new Exception("Couldn't get details");
+                return Ok(commentary);
             }
-            else throw new Exception("Couldn't get details");
-            return Ok(commentary);
+            catch (OperationCanceledException)
+            {
+                // Handle the timeout
+                return StatusCode(504, "Request timed out");
+            }
         }
 
 
         [HttpGet]
         [Route("{city}")]
         public async Task<IActionResult> GetWeatherRightNow(string city)
-        {
-            var client = new HttpClient();
-            var coord = await _context.Cities.FirstOrDefaultAsync(m => m.Name == city);
-            if (coord == null)
-            {
-                var res = await client.GetAsync($"http://127.0.0.1:5000//weather/coordinates/{city}");
-                if (!res.IsSuccessStatusCode)
-                {
-                    throw new Exception("Something's wrong");
-                }
-                else coord = await _context.Cities.FirstOrDefaultAsync(m => m.Name == city);
-            }
 
-            var request = new HttpRequestMessage
+        {
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+            try
             {
-                Method = HttpMethod.Get,
-                RequestUri = new Uri($"https://open-weather13.p.rapidapi.com/city/latlon/{coord.latitude}/{coord.longitude}"),
-                Headers =
+                var client = new HttpClient();
+                var coord = await _context.Cities.FirstOrDefaultAsync(m => m.Name == city);
+                if (coord == null)
+                {
+                    var res = await client.GetAsync($"http://gateway:5000/weather/coordinates/{city}");
+                    if (!res.IsSuccessStatusCode)
+                    {
+                        throw new Exception("Something's wrong");
+                    }
+                    else coord = await _context.Cities.FirstOrDefaultAsync(m => m.Name == city);
+                }
+
+                var request = new HttpRequestMessage
+                {
+                    Method = HttpMethod.Get,
+                    RequestUri = new Uri($"https://open-weather13.p.rapidapi.com/city/latlon/{coord.latitude}/{coord.longitude}"),
+                    Headers =
     {
         { "X-RapidAPI-Key", "f95ce684c2msh5ca0330a7bc3f70p115564jsnfc599ba663d2" },
         { "X-RapidAPI-Host", "open-weather13.p.rapidapi.com" },
     },
-            };
-            using (var response = await client.SendAsync(request))
-            {
-                response.EnsureSuccessStatusCode();
-                var body = await response.Content.ReadAsStringAsync();
-                var weatherData = JsonConvert.DeserializeObject<WeatherForecastItem>(body);
-                var data = new List<WeatherTable>();
-               
+                };
+                using (var response = await client.SendAsync(request))
+                {
+                    response.EnsureSuccessStatusCode();
+                    var body = await response.Content.ReadAsStringAsync();
+                    var weatherData = JsonConvert.DeserializeObject<WeatherForecastItem>(body);
+                    var data = new List<WeatherTable>();
+
                     foreach (var desc in weatherData.Weather)
                     {
                         var City = city;
@@ -259,7 +302,7 @@ namespace Weather.Controllers
                         var Desc = desc.Description;
                         var Cond = desc.Main;
 
-                        
+
 
 
                         var weatr = new WeatherTable
@@ -272,22 +315,30 @@ namespace Weather.Controllers
                             Condition = Cond
                         };
                         _context.Weather.Add(weatr);
-                    data.Add(weatr);
-                        
+                        data.Add(weatr);
+
 
 
                         await _context.SaveChangesAsync();
 
                     }
-                return Ok(data);
+                    return Ok(data);
+                }
             }
-                
+            catch (OperationCanceledException)
+            {
+                // Handle the timeout
+                return StatusCode(504, "Request timed out");
             }
+
+        }
 
         [HttpGet]
         [Route("warmestday/{city}")]
         public async Task<IActionResult> GetWarmestWeather(string city)
         {
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
             try
             {
                 var client = new HttpClient();
@@ -295,7 +346,7 @@ namespace Weather.Controllers
 
                 if (days.Count == 0)
                 {
-                    var res = await client.GetAsync($"http://127.0.0.1:5000//weather/forecast/{city}");
+                    var res = await client.GetAsync($"http://gateway:5000/weather/coordinates/{city}");
                     if (!res.IsSuccessStatusCode)
                     {
                         throw new Exception("Something's wrong");
@@ -354,7 +405,11 @@ namespace Weather.Controllers
                 // Return the warmest day found
                 return Ok(resp);
             }
-
+            catch (OperationCanceledException)
+            {
+                // Handle the timeout
+                return StatusCode(504, "Request timed out");
+            }
             catch (Exception ex)
             {
                 // Log the exception and return an error response
@@ -362,6 +417,8 @@ namespace Weather.Controllers
                 return StatusCode(500, "An error occurred while retrieving the warmest weather.");
             }
         }
+
+      
 
 
     }
